@@ -163,13 +163,35 @@ class Bird {
         this.y = this.initialY;
         this.dead = false;
         this.scale = 1;
+        this.targetScale = 1;
+        this.scaleStep = 0;
     }
 
-    resize(scale) {
-        this.scale = scale;
+    resize(targetScale, durationFrames) {
+        this.targetScale = targetScale;
+        if (durationFrames > 0) {
+            this.scaleStep = (targetScale - this.scale) / durationFrames;
+        } else {
+            this.scale = targetScale;
+            this.scaleStep = 0;
+        }
+    }
+
+    updateScale() {
+        if (this.scaleStep !== 0) {
+            this.scale += this.scaleStep;
+            // Check if we reached or passed the target
+            if ((this.scaleStep > 0 && this.scale >= this.targetScale) ||
+                (this.scaleStep < 0 && this.scale <= this.targetScale)) {
+                this.scale = this.targetScale;
+                this.scaleStep = 0;
+            }
+        }
     }
 
     update() {
+        this.updateScale();
+
         // Animation
         const period = state.current == state.getReady ? 10 : 5;
         this.frame += frames % period == 0 ? 1 : 0;
@@ -305,9 +327,9 @@ const scrolls = {
     castSpell: function (targetBird) {
         hitStopFrames = 30; // Pause for ~0.5s (assuming 60fps)
         if (targetBird.scale > 1) {
-            targetBird.resize(1);
+            targetBird.resize(1, hitStopFrames);
         } else {
-            targetBird.resize(1.5);
+            targetBird.resize(1.5, hitStopFrames);
         }
     },
 
@@ -441,6 +463,9 @@ function draw() {
 function update() {
     if (hitStopFrames > 0) {
         hitStopFrames--;
+        // Allow scale animation during hit stop
+        playerBird.updateScale();
+        aiBird.updateScale();
         return;
     }
     playerBird.update();
