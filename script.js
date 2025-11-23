@@ -4,6 +4,7 @@ const ctx = canvas.getContext('2d');
 // Game Variables
 let frames = 0;
 const DEGREE = Math.PI / 180;
+let hitStopFrames = 0;
 
 // Load Images
 const sprite = new Image();
@@ -25,6 +26,9 @@ const bgImg = new Image();
 bgImg.src = 'assets/background.png';
 const pipeImg = new Image();
 pipeImg.src = 'assets/pipe-green.png';
+
+const scrollImg = new Image();
+scrollImg.src = 'assets/magic-scroll.png';
 
 // Game State
 const state = {
@@ -80,13 +84,15 @@ canvas.addEventListener('click', function (evt) {
 function resetGame() {
     playerBird.reset();
     aiBird.reset();
-    pipes.position = [];
+    pipes.reset();
+    scrolls.reset();
     score.value = 0;
     scoreElement.innerHTML = 0;
     state.current = state.getReady;
     gameOverScreen.classList.remove('active');
     startScreen.classList.add('active');
     frames = 0;
+    hitStopFrames = 0;
 }
 
 // Background
@@ -125,13 +131,14 @@ class Bird {
         this.speed = 0;
         this.rotation = 0;
         this.dead = false;
+        this.scale = 1;
     }
 
     draw() {
         if (this.dead && this.y >= canvas.height) return; // Don't draw if dead and off screen
 
-        let birdW = this.w;
-        let birdH = this.h;
+        let birdW = this.w * this.scale;
+        let birdH = this.h * this.scale;
 
         ctx.save();
         ctx.translate(this.x, this.y);
@@ -155,6 +162,11 @@ class Bird {
         this.rotation = 0;
         this.y = this.initialY;
         this.dead = false;
+        this.scale = 1;
+    }
+
+    resize(scale) {
+        this.scale = scale;
     }
 
     update() {
@@ -239,6 +251,70 @@ class AIBird extends Bird {
 const playerBird = new Bird([sprite, spriteMid, spriteDown], 150);
 const aiBird = new AIBird([blueSprite, blueSpriteMid, blueSpriteDown], 180);
 
+const scrolls = {
+    position: [],
+    w: 30,
+    h: 30,
+    dx: 2,
+
+    draw: function () {
+        for (let i = 0; i < this.position.length; i++) {
+            let s = this.position[i];
+            ctx.drawImage(scrollImg, s.x, s.y, this.w, this.h);
+        }
+    },
+
+    update: function () {
+        if (state.current !== state.game) return;
+
+        // Spawn logic handled in pipes to sync with gaps
+
+        for (let i = 0; i < this.position.length; i++) {
+            let s = this.position[i];
+            s.x -= this.dx;
+
+            // Collision with Player
+            if (!playerBird.dead && this.checkCollision(playerBird, s)) {
+                this.castSpell(aiBird);
+                this.position.splice(i, 1);
+                i--;
+                continue;
+            }
+
+            // Collision with AI
+            if (!aiBird.dead && this.checkCollision(aiBird, s)) {
+                this.castSpell(playerBird);
+                this.position.splice(i, 1);
+                i--;
+                continue;
+            }
+
+            if (s.x + this.w <= 0) {
+                this.position.shift();
+                i--;
+            }
+        }
+    },
+
+    checkCollision: function (bird, s) {
+        let birdRadius = bird.radius * bird.scale;
+        return bird.x + birdRadius > s.x && bird.x - birdRadius < s.x + this.w &&
+            bird.y + birdRadius > s.y && bird.y - birdRadius < s.y + this.h;
+    },
+
+    castSpell: function (targetBird) {
+        hitStopFrames = 30; // Pause for ~0.5s (assuming 60fps)
+        if (targetBird.scale > 1) {
+            targetBird.resize(1);
+        } else {
+            targetBird.resize(1.5);
+        }
+    },
+
+    reset: function () {
+        this.position = [];
+    }
+}
 
 // Pipes
 const pipes = {
@@ -273,10 +349,19 @@ const pipes = {
         if (state.current !== state.game) return;
 
         if (frames % 150 == 0) {
+            let pipeY = this.maxYPos * (Math.random() + 1);
             this.position.push({
                 x: canvas.width,
-                y: this.maxYPos * (Math.random() + 1)
+                y: pipeY
             });
+
+            // Randomly spawn scroll between pipes
+            if (Math.random() < 0.25) { // 25% chance
+                scrolls.position.push({
+                    x: canvas.width + this.w / 2 + 75, // Between this pipe and next (approx)
+                    y: pipeY + this.h + this.gap / 2 - 15 // Center of gap
+                });
+            }
         }
 
         for (let i = 0; i < this.position.length; i++) {
@@ -312,17 +397,22 @@ const pipes = {
         if (bird.dead) return;
 
         let bottomPipeY = p.y + this.h + this.gap;
+        let birdRadius = bird.radius * bird.scale;
 
         // Top Pipe
-        if (bird.x + bird.radius > p.x && bird.x - bird.radius < p.x + this.w &&
-            bird.y + bird.radius > p.y && bird.y - bird.radius < p.y + this.h) {
+        if (bird.x + birdRadius > p.x && bird.x - birdRadius < p.x + this.w &&
+            bird.y + birdRadius > p.y && bird.y - birdRadius < p.y + this.h) {
             bird.die();
         }
         // Bottom Pipe
-        if (bird.x + bird.radius > p.x && bird.x - bird.radius < p.x + this.w &&
-            bird.y + bird.radius > bottomPipeY && bird.y - bird.radius < bottomPipeY + this.h) {
+        if (bird.x + birdRadius > p.x && bird.x - birdRadius < p.x + this.w &&
+            bird.y + birdRadius > bottomPipeY && bird.y - birdRadius < bottomPipeY + this.h) {
             bird.die();
         }
+    },
+
+    reset: function () {
+        this.position = [];
     }
 }
 
@@ -342,16 +432,22 @@ function draw() {
 
     bg.draw();
     pipes.draw();
+    scrolls.draw();
     playerBird.draw();
     aiBird.draw();
 }
 
 // Update
 function update() {
+    if (hitStopFrames > 0) {
+        hitStopFrames--;
+        return;
+    }
     playerBird.update();
     aiBird.update();
     bg.update();
     pipes.update();
+    scrolls.update();
 }
 
 // Loop
